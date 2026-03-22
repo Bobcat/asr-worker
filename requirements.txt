@@ -1,0 +1,2 @@
+# asr-worker runtime currently depends on Python stdlib only.
+# Keep this file so deployment scripts can run a stable install step.

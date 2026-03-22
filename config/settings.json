@@ -1,0 +1,33 @@
+{
+  "asr_pool": {
+    "base_url": "http://127.0.0.1:8090",
+    "token": ""
+  },
+  "asr_remote": {
+    "http_timeout_s": 10.0,
+    "retry_attempts": 3,
+    "retry_base_delay_s": 0.2,
+    "retry_max_delay_s": 2.0,
+    "retry_jitter_s": 0.1
+  },
+  "worker": {
+    "queue_base": "data/jobs/upload_worker",
+    "queue_name": "",
+    "consumer_id": "",
+    "max_outstanding_requests": 1,
+    "progress_db_dir": "data/progress_db",
+    "progress_runs_path": "data/progress_db/runs_v1.jsonl",
+    "host_id": "",
+    "instance": "1",
+    "hardware_key": ""
+  },
+  "worker_events": {
+    "sse_heartbeat_s": 10.0,
+    "inbox_debounce_ms": 40,
+    "coordinator_tick_s": 0.2,
+    "metrics_log_interval_s": 30.0
+  },
+  "polling_intervals": {
+    "asr_remote_pending_status_poll_s": 1.0
+  }
+}

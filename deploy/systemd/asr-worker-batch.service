@@ -1,0 +1,21 @@
+[Unit]
+Description=ASR Worker Upload
+After=network.target
+
+[Service]
+User=gunnar
+Group=gunnar
+WorkingDirectory=/srv/asr-worker
+ExecStartPre=/usr/bin/mkdir -p /srv/transcribe/data/jobs/upload_worker/inbox /srv/transcribe/data/jobs/upload_worker/running /srv/transcribe/data/jobs/upload_worker/done /srv/transcribe/data/jobs/upload_worker/error
+Environment=ASR_WORKER_QUEUE_BASE=/srv/transcribe/data/jobs/upload_worker
+Environment=ASR_WORKER_MAX_OUTSTANDING=1
+Environment=ASR_WORKER_CONSUMER_ID=worker-upload@1
+ExecStart=/srv/asr-worker/.venv/bin/python /srv/asr-worker/worker_daemon.py
+Restart=always
+RestartSec=2
+EnvironmentFile=-/etc/asr-worker/asr-worker.env
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

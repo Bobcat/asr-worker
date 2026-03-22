@@ -1,0 +1,20 @@
+# User unit (systemctl --user). Live ASR worker template.
+[Unit]
+Description=ASR Worker Live Dev (%i)
+
+[Service]
+Type=simple
+WorkingDirectory=/home/gunnar/projects/asr-worker-dev
+ExecStartPre=/usr/bin/mkdir -p /home/gunnar/projects/transcribe-dev/data/jobs/live_worker/inbox /home/gunnar/projects/transcribe-dev/data/jobs/live_worker/running /home/gunnar/projects/transcribe-dev/data/jobs/live_worker/done /home/gunnar/projects/transcribe-dev/data/jobs/live_worker/error
+Environment=ASR_WORKER_QUEUE_BASE=/home/gunnar/projects/transcribe-dev/data/jobs/live_worker
+Environment=ASR_WORKER_MAX_OUTSTANDING=4
+Environment=ASR_WORKER_CONSUMER_ID=worker-live@%i
+ExecStart=/home/gunnar/projects/asr-worker-dev/.venv/bin/python /home/gunnar/projects/asr-worker-dev/worker_daemon.py
+Restart=always
+RestartSec=2
+EnvironmentFile=-%h/.config/asr-worker/asr-worker.dev.env
+Nice=5
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target
