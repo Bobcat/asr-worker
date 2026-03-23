@@ -84,6 +84,17 @@ Queue routing is normally driven by environment variables in unit files:
 - `ASR_WORKER_MAX_OUTSTANDING` (optional override)
 - `ASR_WORKER_CONSUMER_ID` (optional override)
 
+Observability endpoint settings:
+
+- `ASR_WORKER_OPS_ENABLED` (`1`/`0`, default `1`)
+- `ASR_WORKER_OPS_HOST` (default `127.0.0.1`)
+- `ASR_WORKER_OPS_PORT` (default `18110`)
+- `ASR_WORKER_OPS_WINDOW_S` (default `300`)
+- `ASR_WORKER_OPS_RUNNING_STUCK_S` (default `900`)
+
+Each worker process exposes its own `/ops` and `/ops/metrics` on its configured host/port.  
+If you run multiple workers on one machine, use a different `ASR_WORKER_OPS_PORT` per instance.
+
 ## Worker Contract Overview
 
 Each worker job must provide a `job.json` with this shape:
@@ -98,7 +109,10 @@ Each worker job must provide a `job.json` with this shape:
     "request_id": "job_123",
     "language": "nl",
     "speaker_mode": "auto",
-    "priority": "background"
+    "priority": "background",
+    "routing": {
+      "slot_affinity": 0
+    }
   },
   "outputs": {
     "srt_relpath": "artifacts/output.srt"
@@ -116,6 +130,8 @@ Each worker job must provide a `job.json` with this shape:
 
 ## Job JSON Field Reference
 
+The tables below describe the main fields most clients will use. They are not meant as a complete, exhaustive dump of every option.
+
 ### `input`
 
 | Field | Required | Default / Rules | Effect |
@@ -129,6 +145,7 @@ Each worker job must provide a `job.json` with this shape:
 |---|---|---|---|
 | `request_id` | Conditionally | Falls back to worker (internally generated) `job_id` | Stable ASR request identifier. |
 | `priority` | No | `background` | `asr-pool` scheduling priority. |
+| `routing.slot_affinity` | No | Integer runner slot id, for example `0` | Requests a specific `asr-pool` runner slot. |
 | `speaker_mode` | No | Normalized to `none` / `auto` / `fixed` | Controls diarization strategy and phase profile. |
 | `align_enabled` | No | `true` | Enables/disables alignment in `asr-pool`. |
 | `diarize_enabled` | No | Defaults from `speaker_mode`; forced `false` when `speaker_mode=none` | Enables/disables diarization in `asr-pool`. |

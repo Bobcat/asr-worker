@@ -4,6 +4,7 @@ import os
 import queue
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,7 @@ from filebacked_worker_runtime import (
   refill_filebacked_from_inbox,
 )
 from inbox_watch import start_inbox_watcher
+from ops_server import OpsSnapshotStore, WorkerOpsServer
 from worker_config import get_float, get_int, get_str
 
 
@@ -92,6 +94,16 @@ class _WorkerLoopCounters:
 
 
 @dataclass
+class _WorkerOpsWindows:
+  submit_started_ts: deque[float] = field(default_factory=deque)
+  submit_failed_ts: deque[float] = field(default_factory=deque)
+  completions_ts: deque[float] = field(default_factory=deque)
+  inbox_events_ts: deque[float] = field(default_factory=deque)
+  sse_reconnects_ts: deque[float] = field(default_factory=deque)
+  feed_resets_ts: deque[float] = field(default_factory=deque)
+
+
+@dataclass
 class _WorkerRuntime:
   event_bus: WorkerEventBus
   inbox_watcher: Any
@@ -131,6 +143,170 @@ def _maybe_log_worker_counters(
     f"submitting={max(0, int(submitting_count))}",
     flush=True,
   )
+
+
+def _env_bool(name: str, default: bool) -> bool:
+  raw = str(os.getenv(name) or "").strip().lower()
+  if not raw:
+    return bool(default)
+  return raw in {"1", "true", "yes", "on"}
+
+
+def _iso_utc_now() -> str:
+  return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _record_window_event(window: deque[float], now_mono: float, *, window_s: float) -> None:
+  window.append(float(now_mono))
+  _trim_window(window, now_mono=now_mono, window_s=window_s)
+
+
+def _trim_window(window: deque[float], *, now_mono: float, window_s: float) -> None:
+  cutoff = float(now_mono) - max(1.0, float(window_s))
+  while window and float(window[0]) < cutoff:
+    window.popleft()
+
+
+def _count_jobs(path: Path) -> int:
+  try:
+    return sum(1 for p in path.iterdir() if p.is_dir() and not str(p.name).startswith("."))
+  except Exception:
+    return 0
+
+
+def _oldest_age_s(path: Path) -> float | None:
+  oldest_mtime: float | None = None
+  now = time.time()
+  try:
+    for p in path.iterdir():
+      if (not p.is_dir()) or str(p.name).startswith("."):
+        continue
+      try:
+        mtime = float(p.stat().st_mtime)
+      except Exception:
+        continue
+      if oldest_mtime is None or mtime < oldest_mtime:
+        oldest_mtime = mtime
+  except Exception:
+    return None
+  if oldest_mtime is None:
+    return None
+  return max(0.0, now - oldest_mtime)
+
+
+def _running_over_threshold_count(path: Path, *, threshold_s: float) -> int:
+  if threshold_s <= 0.0:
+    return 0
+  now = time.time()
+  out = 0
+  try:
+    for p in path.iterdir():
+      if (not p.is_dir()) or str(p.name).startswith("."):
+        continue
+      try:
+        age_s = max(0.0, now - float(p.stat().st_mtime))
+      except Exception:
+        continue
+      if age_s >= threshold_s:
+        out += 1
+  except Exception:
+    return 0
+  return out
+
+
+def _build_ops_snapshot(
+  *,
+  queue_root: QueueRoot,
+  max_outstanding: int,
+  pending_count: int,
+  submitting_count: int,
+  windows: _WorkerOpsWindows,
+  window_s: float,
+  running_stuck_threshold_s: int,
+) -> dict[str, Any]:
+  now_mono = time.monotonic()
+  _trim_window(windows.submit_started_ts, now_mono=now_mono, window_s=window_s)
+  _trim_window(windows.submit_failed_ts, now_mono=now_mono, window_s=window_s)
+  _trim_window(windows.completions_ts, now_mono=now_mono, window_s=window_s)
+  _trim_window(windows.inbox_events_ts, now_mono=now_mono, window_s=window_s)
+  _trim_window(windows.sse_reconnects_ts, now_mono=now_mono, window_s=window_s)
+  _trim_window(windows.feed_resets_ts, now_mono=now_mono, window_s=window_s)
+
+  inbox_count = _count_jobs(queue_root.inbox)
+  running_count = _count_jobs(queue_root.running)
+  done_count = _count_jobs(queue_root.done)
+  error_count = _count_jobs(queue_root.error)
+  oldest_inbox_s = _oldest_age_s(queue_root.inbox)
+  oldest_running_s = _oldest_age_s(queue_root.running)
+
+  submits_started_5m = len(windows.submit_started_ts)
+  submits_failed_5m = len(windows.submit_failed_ts)
+  submit_fail_rate_5m = float(submits_failed_5m) / float(submits_started_5m) if submits_started_5m > 0 else 0.0
+  jobs_completed_5m = len(windows.completions_ts)
+  running_over_threshold_count = _running_over_threshold_count(
+    queue_root.running,
+    threshold_s=float(running_stuck_threshold_s),
+  )
+
+  health = "ok"
+  health_reason = "Healthy"
+  if (
+    running_over_threshold_count > 0
+    or ((oldest_inbox_s or 0.0) >= 60.0 and inbox_count > 0 and pending_count >= max_outstanding)
+  ):
+    health = "error"
+    if running_over_threshold_count > 0:
+      health_reason = "Running jobs exceeded stuck threshold"
+    else:
+      health_reason = "Inbox backlog age above 60s with no free submission capacity"
+  elif (
+    (oldest_inbox_s or 0.0) >= 20.0
+    or submit_fail_rate_5m >= 0.05
+    or len(windows.sse_reconnects_ts) >= 3
+  ):
+    health = "warn"
+    if (oldest_inbox_s or 0.0) >= 20.0:
+      health_reason = "Inbox backlog age above 20s"
+    elif submit_fail_rate_5m >= 0.05:
+      health_reason = "5m submit failure rate above threshold"
+    else:
+      health_reason = "Repeated SSE reconnects in 5m window"
+
+  return {
+    "service": "asr-worker",
+    "version": "ops_v1",
+    "now_utc": _iso_utc_now(),
+    "window_s": int(window_s),
+    "health": health,
+    "health_reason": health_reason,
+    "summary": {
+      "queue_name": queue_root.name,
+      "inbox_count": inbox_count,
+      "running_count": running_count,
+      "done_count": done_count,
+      "error_count": error_count,
+      "oldest_inbox_s": oldest_inbox_s,
+      "oldest_running_s": oldest_running_s,
+      "submit_fail_rate_5m": round(submit_fail_rate_5m, 4),
+      "jobs_completed_5m": jobs_completed_5m,
+    },
+    "details": {
+      "worker_loop": {
+        "max_outstanding": int(max_outstanding),
+        "pending_count": int(pending_count),
+        "submitting_count": int(submitting_count),
+      },
+      "events_5m": {
+        "feed_resets": len(windows.feed_resets_ts),
+        "sse_reconnects": len(windows.sse_reconnects_ts),
+        "inbox_events": len(windows.inbox_events_ts),
+      },
+      "stuck": {
+        "running_over_threshold_count": int(running_over_threshold_count),
+        "threshold_s": int(running_stuck_threshold_s),
+      },
+    },
+  }
 
 
 def _start_worker_runtime(
@@ -195,7 +371,10 @@ def _handle_submit_result_event(
   pending: dict[str, PendingWorkerJob],
   submitting: dict[str, PendingWorkerJob],
   counters: _WorkerLoopCounters,
+  windows: _WorkerOpsWindows,
+  window_s: float,
 ) -> bool:
+  now_mono = time.monotonic()
   pending_job = payload.get("pending")
   job_id = str(getattr(getattr(pending_job, "job", None), "job_id", "") or "").strip()
   if job_id:
@@ -205,6 +384,7 @@ def _handle_submit_result_event(
   request_id = str(submit.get("request_id") or "").strip()
   if err_msg or not request_id:
     counters.submits_failed += 1
+    _record_window_event(windows.submit_failed_ts, now_mono, window_s=window_s)
   else:
     counters.submits_succeeded += 1
   return bool(handle_filebacked_submit_result(payload=payload, pending=pending))
@@ -215,6 +395,8 @@ def _handle_completion_event(
   event: dict[str, Any],
   pending: dict[str, PendingWorkerJob],
   counters: _WorkerLoopCounters,
+  windows: _WorkerOpsWindows,
+  window_s: float,
 ) -> bool:
   rid = str(event.get("request_id") or "").strip()
   if not rid:
@@ -224,6 +406,7 @@ def _handle_completion_event(
   if pending_job is None:
     return False
   counters.completions_matched += 1
+  _record_window_event(windows.completions_ts, time.monotonic(), window_s=window_s)
   try:
     finalize_filebacked_job_terminal(pending=pending_job, event=event)
     print(f"Done {pending_job.job.job_id} state={str(event.get('state') or '')}")
@@ -309,6 +492,16 @@ def _run_worker_submit_reap() -> int:
     "interval_s": get_float("polling_intervals.asr_remote_pending_status_poll_s", 1.0, min_value=0.2),
     "last_pending_status_poll_mono": 0.0,
   }
+  ops_enabled = _env_bool("ASR_WORKER_OPS_ENABLED", True)
+  ops_host = str(os.getenv("ASR_WORKER_OPS_HOST") or "").strip() or "127.0.0.1"
+  ops_port = int(str(os.getenv("ASR_WORKER_OPS_PORT") or "").strip() or "18110")
+  ops_window_s = float(str(os.getenv("ASR_WORKER_OPS_WINDOW_S") or "").strip() or "300")
+  ops_running_stuck_threshold_s = int(str(os.getenv("ASR_WORKER_OPS_RUNNING_STUCK_S") or "").strip() or "900")
+  ops_store = OpsSnapshotStore()
+  ops_server = WorkerOpsServer(host=ops_host, port=ops_port, store=ops_store)
+  if ops_enabled:
+    ops_server.start()
+  windows = _WorkerOpsWindows()
   inbox_dirty = True
   print(
     f"worker_daemon started queue={queue_root.name} "
@@ -325,6 +518,7 @@ def _run_worker_submit_reap() -> int:
       if ev is not None:
         if ev.kind == WorkerEventType.INBOX_DIRTY:
           counters.inbox_events += 1
+          _record_window_event(windows.inbox_events_ts, time.monotonic(), window_s=ops_window_s)
           inbox_dirty = True
         elif ev.kind == WorkerEventType.SUBMIT_RESULT:
           payload = dict(ev.payload or {})
@@ -333,6 +527,8 @@ def _run_worker_submit_reap() -> int:
             pending=pending,
             submitting=submitting,
             counters=counters,
+            windows=windows,
+            window_s=ops_window_s,
           )
           if event_did_work:
             did_work = True
@@ -343,12 +539,15 @@ def _run_worker_submit_reap() -> int:
             event=event,
             pending=pending,
             counters=counters,
+            windows=windows,
+            window_s=ops_window_s,
           )
           if event_did_work:
             did_work = True
             inbox_dirty = True
         elif ev.kind == WorkerEventType.FEED_RESET:
           counters.feed_resets += 1
+          _record_window_event(windows.feed_resets_ts, time.monotonic(), window_s=ops_window_s)
           old_feed_id = str((ev.payload or {}).get("old_feed_id") or "").strip()
           new_feed_id = str((ev.payload or {}).get("new_feed_id") or "").strip()
           _fail_pending_due_to_feed_reset(
@@ -367,6 +566,7 @@ def _run_worker_submit_reap() -> int:
           reason = str((ev.payload or {}).get("reason") or "").strip().lower()
           if reason == "completion_stream_error":
             counters.sse_reconnects += 1
+            _record_window_event(windows.sse_reconnects_ts, time.monotonic(), window_s=ops_window_s)
         elif ev.kind != WorkerEventType.TICK:
           continue
 
@@ -388,6 +588,18 @@ def _run_worker_submit_reap() -> int:
           counters=counters,
         )
         did_work = refill_did_work or did_work
+
+      ops_store.set_snapshot(
+        _build_ops_snapshot(
+          queue_root=queue_root,
+          max_outstanding=max_outstanding,
+          pending_count=len(pending),
+          submitting_count=len(submitting),
+          windows=windows,
+          window_s=ops_window_s,
+          running_stuck_threshold_s=ops_running_stuck_threshold_s,
+        )
+      )
 
       if did_work:
         runtime.event_bus.put(WorkerEventType.TICK, {"reason": "followup"})
@@ -411,6 +623,7 @@ def _run_worker_submit_reap() -> int:
       force=True,
     )
     _stop_worker_runtime(runtime)
+    ops_server.stop()
   return 0
 
 
