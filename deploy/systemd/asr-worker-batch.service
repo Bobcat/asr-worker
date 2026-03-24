@@ -10,6 +10,7 @@ ExecStartPre=/usr/bin/mkdir -p /srv/transcribe/data/jobs/upload_worker/inbox /sr
 Environment=ASR_WORKER_QUEUE_BASE=/srv/transcribe/data/jobs/upload_worker
 Environment=ASR_WORKER_MAX_OUTSTANDING=1
 Environment=ASR_WORKER_CONSUMER_ID=worker-upload@1
+Environment=ASR_WORKER_OPS_PORT=28111
 ExecStart=/srv/asr-worker/.venv/bin/python /srv/asr-worker/worker_daemon.py
 Restart=always
 RestartSec=2
