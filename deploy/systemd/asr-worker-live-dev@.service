@@ -9,6 +9,8 @@ ExecStartPre=/usr/bin/mkdir -p /home/gunnar/projects/transcribe-dev/data/jobs/li
 Environment=ASR_WORKER_QUEUE_BASE=/home/gunnar/projects/transcribe-dev/data/jobs/live_worker
 Environment=ASR_WORKER_MAX_OUTSTANDING=4
 Environment=ASR_WORKER_CONSUMER_ID=worker-live@%i
+Environment=ASR_WORKER_STATUS_OWNER=asr-worker-live
+Environment=ASR_POOL_STATUS_OWNER=asr-pool
 ExecStart=/home/gunnar/projects/asr-worker-dev/.venv/bin/python /home/gunnar/projects/asr-worker-dev/worker_daemon.py
 Restart=always
 RestartSec=2

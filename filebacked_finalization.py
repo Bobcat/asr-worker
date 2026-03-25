@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,17 @@ from asr_client_remote import download_remote_request_srt_to_path
 from progress_tracker import _format_timings_text
 from runtime_meta import _extended_runtime_meta_patch
 from worker_status_io import _utc_iso, _write_status
+from worker_config import get_str
+
+
+def _worker_status_owner() -> str:
+  raw = str(os.getenv("ASR_WORKER_STATUS_OWNER") or "").strip() or get_str("worker.status_owner", "").strip()
+  return raw or "asr-worker"
+
+
+def _pool_status_owner() -> str:
+  raw = str(os.getenv("ASR_POOL_STATUS_OWNER") or "").strip() or get_str("worker.asr_pool_status_owner", "").strip()
+  return raw or "asr-pool"
 
 
 def _record_phase_timing(*, pending: Any, name: str, elapsed_s: float) -> None:
@@ -32,6 +44,7 @@ def finalize_filebacked_job_terminal(
     patch: dict[str, Any] = {
       "state": ("cancelled" if terminal_state == "cancelled" else "error"),
       "phase": "error",
+      "status_owner": _pool_status_owner(),
       "progress": 1.0,
       "finished_at": _utc_iso(),
       "message": f"Worker error: {err_code}: {err_msg}",
@@ -93,6 +106,7 @@ def finalize_filebacked_job_terminal(
   patch: dict[str, Any] = {
     "state": "done",
     "phase": "done",
+    "status_owner": _pool_status_owner(),
     "progress": 1.0,
     "finished_at": _utc_iso(),
     "message": "Done",
@@ -125,6 +139,7 @@ def finalize_filebacked_job_error(*, pending: Any, exc: Exception) -> None:
   patch: dict[str, Any] = {
     "state": "error",
     "phase": "error",
+    "status_owner": _worker_status_owner(),
     "progress": 1.0,
     "finished_at": _utc_iso(),
     "message": f"Worker error: {exc!r}",

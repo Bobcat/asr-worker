@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import queue
 import socket
 import time
@@ -64,6 +65,16 @@ class PendingWorkerJob:
   progress_start_phase: Any = _noop
   progress_finish_phase: Any = _noop
   progress_heartbeat: Any = _noop
+
+
+def _worker_status_owner() -> str:
+  raw = str(os.getenv("ASR_WORKER_STATUS_OWNER") or "").strip() or get_str("worker.status_owner", "").strip()
+  return raw or "asr-worker"
+
+
+def _pool_status_owner() -> str:
+  raw = str(os.getenv("ASR_POOL_STATUS_OWNER") or "").strip() or get_str("worker.asr_pool_status_owner", "").strip()
+  return raw or "asr-pool"
 
 
 def _feature_flags(job_cfg: dict[str, Any]) -> dict[str, bool]:
@@ -168,6 +179,7 @@ def _apply_pending_status(*, pending: PendingWorkerJob, row: dict[str, Any]) -> 
   _write_status(
     pending.job.status_path,
     phase="whisperx_wait",
+    status_owner=_pool_status_owner(),
     message=msg,
   )
 
@@ -246,6 +258,7 @@ def _prepare_worker_job_for_submit(
   _write_status(
     job.status_path,
     state="running",
+    status_owner=_worker_status_owner(),
     started_at=str(status_before.get("started_at") or "").strip() or _utc_iso(),
   )
   pending.wx_t0_mono = time.monotonic()
@@ -287,6 +300,7 @@ def _prepare_worker_job_for_submit(
   _write_status(
     job.status_path,
     phase="whisperx_wait",
+    status_owner=_pool_status_owner(),
     progress=0.1,
     message=wait_msg,
     asr_request_id=pending.request_id,

@@ -7,8 +7,10 @@ Type=simple
 WorkingDirectory=/home/gunnar/projects/asr-worker-dev
 ExecStartPre=/usr/bin/mkdir -p /home/gunnar/projects/transcribe-dev/data/jobs/upload_worker/inbox /home/gunnar/projects/transcribe-dev/data/jobs/upload_worker/running /home/gunnar/projects/transcribe-dev/data/jobs/upload_worker/done /home/gunnar/projects/transcribe-dev/data/jobs/upload_worker/error
 Environment=ASR_WORKER_QUEUE_BASE=/home/gunnar/projects/transcribe-dev/data/jobs/upload_worker
-Environment=ASR_WORKER_MAX_OUTSTANDING=1
+Environment=ASR_WORKER_MAX_OUTSTANDING=4
 Environment=ASR_WORKER_CONSUMER_ID=worker-upload@%i
+Environment=ASR_WORKER_STATUS_OWNER=asr-worker-batch
+Environment=ASR_POOL_STATUS_OWNER=asr-pool
 ExecStart=/home/gunnar/projects/asr-worker-dev/.venv/bin/python /home/gunnar/projects/asr-worker-dev/worker_daemon.py
 Restart=always
 RestartSec=2
