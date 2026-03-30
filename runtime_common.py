@@ -111,7 +111,6 @@ def _build_remote_pool_request_from_contract(*, job: object, job_cfg: dict[str, 
       pass
 
   options: dict[str, Any] = {
-    "latency_mode": str(request_cfg.get("latency_mode") or "default").strip() or "default",
     "align_enabled": bool(request_cfg.get("align_enabled", True)),
     "diarize_enabled": bool(request_cfg.get("diarize_enabled", speaker_mode != "none")) and speaker_mode != "none",
     "speaker_mode": speaker_mode,
@@ -128,6 +127,15 @@ def _build_remote_pool_request_from_contract(*, job: object, job_cfg: dict[str, 
       options["beam_size"] = max(1, int(beam_size))
     except Exception:
       pass
+  chunk_size = request_cfg.get("chunk_size")
+  if chunk_size is not None:
+    try:
+      options["chunk_size"] = max(1, int(chunk_size))
+    except Exception:
+      pass
+  asr_backend = str(request_cfg.get("asr_backend") or "").strip().lower()
+  if asr_backend:
+    options["asr_backend"] = asr_backend
   if speaker_mode == "fixed":
     min_speakers = request_cfg.get("min_speakers")
     max_speakers = request_cfg.get("max_speakers")

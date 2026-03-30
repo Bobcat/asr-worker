@@ -71,6 +71,20 @@ def _iter_done_records(runs_path: Path) -> list[dict[str, Any]]:
   return rows
 
 
+def _record_audio_duration_s(record: dict[str, Any]) -> int:
+  try:
+    value = int(record.get("audio_duration_s", 0))
+  except Exception:
+    value = 0
+  if value > 0:
+    return value
+  try:
+    value = int(record.get("snippet_seconds", 0))
+  except Exception:
+    value = 0
+  return value if value > 0 else 0
+
+
 def build_prediction(
   *,
   runs_path: Path,
@@ -102,7 +116,8 @@ def build_prediction(
   used_defaults = False
 
   if n > 0:
-    durs = [int(r.get("audio_duration_s", 0)) for r in candidates if int(r.get("audio_duration_s", 0)) > 0]
+    durs = [_record_audio_duration_s(r) for r in candidates]
+    durs = [d for d in durs if d > 0]
     if durs and (audio_duration_s < min(durs) or audio_duration_s > max(durs)):
       hints.append("extrapolated_audio_duration")
 
@@ -111,7 +126,7 @@ def build_prediction(
       rates: list[float] = []
       for r in candidates:
         sec = _safe_float((r.get("phase_seconds") or {}).get(phase))
-        dur = _safe_float(r.get("audio_duration_s"))
+        dur = _safe_float(_record_audio_duration_s(r))
         if sec is None or dur is None or dur <= 0:
           continue
         if sec < 0:

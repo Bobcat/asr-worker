@@ -189,6 +189,10 @@ def _hardware_key() -> str:
   if raw:
     return raw
   host_id = get_str("worker.host_id", "").strip() or (socket.gethostname().split(".")[0] or "unknown-host").strip() or "unknown-host"
+  if host_id == "dc1":
+    return "dc1-rtx5070ti-cuda"
+  if host_id == "dc2":
+    return "dc2-rtx5090-cuda"
   return f"{host_id}-unknown"
 
 
