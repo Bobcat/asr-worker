@@ -4,3 +4,4 @@ __pycache__/
 config/local.json
 data/
 *.log
+AGENTS.md

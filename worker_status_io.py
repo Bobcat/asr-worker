@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -66,7 +67,9 @@ def _read_json(p: Path) -> dict[str, Any]:
 
 def _write_json(p: Path, obj: dict[str, Any]) -> None:
   p.parent.mkdir(parents=True, exist_ok=True)
-  p.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+  tmp = p.with_suffix(p.suffix + ".tmp")
+  tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+  os.replace(tmp, p)
 
 
 def _write_status(status_path: Path, **patch: Any) -> None:
