@@ -37,10 +37,29 @@ from worker_config import get_str
 
 
 _REPO_ROOT = Path(__file__).resolve().parent
+
+
+def _resolve_worker_queue_base() -> Path:
+  env_base = str(os.getenv("ASR_WORKER_QUEUE_BASE") or "").strip()
+  cfg_base = get_str("worker.queue_base", "data/jobs/upload_worker").strip()
+  raw = env_base or cfg_base
+  p = Path(raw) if raw else Path("data/jobs/upload_worker")
+  return p if p.is_absolute() else (_REPO_ROOT / p).resolve()
+
+
+def _default_runs_v1_path() -> Path:
+  queue_base = _resolve_worker_queue_base()
+  data_root = queue_base.parent.parent
+  return (data_root / "progress_db" / "runs_v1.jsonl").resolve()
+
+
 _runs_path = get_str("worker.progress_runs_path", "").strip()
-RUNS_V1_PATH = Path(_runs_path) if _runs_path else Path(get_str("worker.progress_db_dir", "data/progress_db")) / "runs_v1.jsonl"
-if not RUNS_V1_PATH.is_absolute():
-  RUNS_V1_PATH = (_REPO_ROOT / RUNS_V1_PATH).resolve()
+if _runs_path:
+  RUNS_V1_PATH = Path(_runs_path)
+  if not RUNS_V1_PATH.is_absolute():
+    RUNS_V1_PATH = (_REPO_ROOT / RUNS_V1_PATH).resolve()
+else:
+  RUNS_V1_PATH = _default_runs_v1_path()
 
 
 def _noop(*_args: Any, **_kwargs: Any) -> None:

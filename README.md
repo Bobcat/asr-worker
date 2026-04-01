@@ -183,6 +183,7 @@ When `worker_features.predictive_progress=true`:
 
 - the worker uses `input.duration_ms` as the audio duration input for prediction
 - the predictor reads historical completed runs from `worker.progress_runs_path` (`runs_v1.jsonl`)
+- if `worker.progress_runs_path` is empty, default path is derived from `ASR_WORKER_QUEUE_BASE`/`worker.queue_base` as `<queue_base_parent_parent>/progress_db/runs_v1.jsonl`
 - expected phase durations are estimated; with limited data it falls back to defaults and hints (`cold_start`, `low_sample_n`, `phase_defaults`)
 - the tracker publishes live `progress`, `eta_total_s`, `eta_remaining_s`, `elapsed_s`, `eta_confidence`, `eta_hints` into `status.json`
 

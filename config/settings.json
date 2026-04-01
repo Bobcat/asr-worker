@@ -16,7 +16,7 @@
     "consumer_id": "",
     "max_outstanding_requests": 1,
     "progress_db_dir": "data/progress_db",
-    "progress_runs_path": "../transcribe-dev/data/progress_db/runs_v1.jsonl",
+    "progress_runs_path": "",
     "host_id": "",
     "instance": "1",
     "hardware_key": ""
