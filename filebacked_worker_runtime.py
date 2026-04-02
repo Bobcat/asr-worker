@@ -26,7 +26,6 @@ from progress_tracker import _build_progress_tracker, _format_timings_text
 from runtime_common import (
   _asr_stage_to_phase,
   _build_remote_pool_request_from_contract,
-  _elapsed_utc_s,
   _read_worker_job_contract,
   _resolve_job_relpath,
   _worker_contract_sections,
@@ -80,7 +79,6 @@ class PendingWorkerJob:
   eta_hints: list[str] = field(default_factory=list)
   wx_t0_mono: float = 0.0
   asr_stage: str = ""
-  asr_stage_started_at_utc: str = ""
   progress_start_phase: Any = _noop
   progress_finish_phase: Any = _noop
   progress_heartbeat: Any = _noop
@@ -151,6 +149,15 @@ def _wait_message(
   return base
 
 
+_ROW_TIMING_PHASES: tuple[tuple[str, str], ...] = (
+  ("prepare_s", "whisperx_prepare"),
+  ("transcribe_s", "whisperx_transcribe"),
+  ("align_s", "whisperx_align"),
+  ("diarize_s", "whisperx_diarize"),
+  ("finalize_s", "whisperx_finalize"),
+)
+
+
 def _record_phase_timing(*, pending: PendingWorkerJob, name: str, elapsed_s: float) -> None:
   safe_elapsed = max(0.0, float(elapsed_s))
   pending.timing_rows.append((name, safe_elapsed))
@@ -158,21 +165,57 @@ def _record_phase_timing(*, pending: PendingWorkerJob, name: str, elapsed_s: flo
     _write_status(pending.job.status_path, timings_text=_format_timings_text(pending.timing_rows))
 
 
+def _parse_timing_rows(timings_text: Any) -> list[tuple[str, float]]:
+  text = str(timings_text or "").strip()
+  if not text:
+    return []
+  rows: list[tuple[str, float]] = []
+  seen: set[str] = set()
+  for raw_part in text.split("|"):
+    part = str(raw_part or "").strip()
+    if not part or "=" not in part:
+      continue
+    name_raw, sec_raw = part.split("=", 1)
+    name = str(name_raw or "").strip()
+    if not name or name == "total" or name in seen:
+      continue
+    sec_str = str(sec_raw or "").strip()
+    if sec_str.endswith("s"):
+      sec_str = sec_str[:-1]
+    try:
+      sec = max(0.0, float(sec_str))
+    except Exception:
+      continue
+    rows.append((name, sec))
+    seen.add(name)
+  return rows
+
+
+def _apply_runtime_phase_timings(*, pending: PendingWorkerJob, row: dict[str, Any]) -> None:
+  raw_timings = dict(row.get("timings") or {})
+  if not raw_timings:
+    return
+  recorded_phase_names = {name for name, _elapsed in pending.timing_rows}
+  for timing_key, phase_name in _ROW_TIMING_PHASES:
+    if phase_name in recorded_phase_names:
+      continue
+    if timing_key not in raw_timings:
+      continue
+    try:
+      elapsed_s = max(0.0, float(raw_timings[timing_key]))
+    except Exception:
+      continue
+    _record_phase_timing(pending=pending, name=phase_name, elapsed_s=elapsed_s)
+    pending.progress_finish_phase(phase_name, elapsed_s)
+    recorded_phase_names.add(phase_name)
+
+
 def _apply_pending_status(*, pending: PendingWorkerJob, row: dict[str, Any]) -> None:
   state = str(row.get("state") or "").strip().lower()
   stage = str(row.get("stage") or "").strip().lower()
-  stage_started_at_utc = str(row.get("stage_started_at_utc") or row.get("started_at_utc") or "").strip()
-  if state in {"running", "cancel_requested"} and stage:
+  if state in {"running", "cancel_requested"}:
+    _apply_runtime_phase_timings(pending=pending, row=row)
     prev_stage = str(pending.asr_stage or "").strip().lower()
-    prev_started = str(pending.asr_stage_started_at_utc or "").strip()
-    if prev_stage and stage != prev_stage and prev_started and stage_started_at_utc:
-      phase_name = _asr_stage_to_phase(prev_stage)
-      recorded_phase_names = {name for name, _elapsed in pending.timing_rows}
-      if phase_name and phase_name not in recorded_phase_names:
-        elapsed = _elapsed_utc_s(prev_started, stage_started_at_utc)
-        if elapsed is not None:
-          _record_phase_timing(pending=pending, name=phase_name, elapsed_s=float(elapsed))
-          pending.progress_finish_phase(phase_name, float(elapsed))
     phase_name = _asr_stage_to_phase(stage)
     if phase_name and stage != prev_stage:
       pending.progress_start_phase(
@@ -185,9 +228,8 @@ def _apply_pending_status(*, pending: PendingWorkerJob, row: dict[str, Any]) -> 
         ),
         "whisperx_wait",
       )
-    pending.asr_stage = stage
-    if stage_started_at_utc:
-      pending.asr_stage_started_at_utc = stage_started_at_utc
+    if stage:
+      pending.asr_stage = stage
 
   msg = _wait_message(
     request_id=pending.request_id,
@@ -226,6 +268,23 @@ def _prepare_worker_job_for_submit(
   pending.request_cfg = dict(request_cfg)
   pending.features = _feature_flags(job_cfg)
   status_before = json.loads(job.status_path.read_text(encoding="utf-8"))
+  pending.timing_rows = _parse_timing_rows(status_before.get("timings_text"))
+  try:
+    elapsed_s = max(0.0, float(status_before.get("elapsed_s") or 0.0))
+  except Exception:
+    elapsed_s = 0.0
+  if elapsed_s > 0.0:
+    pending.job_t0_mono = max(0.0, time.monotonic() - elapsed_s)
+
+  completed_actual_seed: dict[str, float] | None = None
+  if pending.timing_rows:
+    seed: dict[str, float] = {}
+    for phase_name, phase_elapsed_s in pending.timing_rows:
+      seed[phase_name] = seed.get(phase_name, 0.0) + max(0.0, float(phase_elapsed_s))
+    if seed:
+      completed_actual_seed = seed
+  elif elapsed_s > 0.0:
+    completed_actual_seed = {"snipping": float(elapsed_s)}
 
   if pending.features.get("download_srt", False):
     pending.srt_output_path = _resolve_job_relpath(
@@ -265,18 +324,12 @@ def _prepare_worker_job_for_submit(
       phase_expected_s=prediction.phase_expected_s,
       eta_confidence=prediction.confidence,
       eta_hints=pending.eta_hints,
+      completed_actual_seed=completed_actual_seed,
     )
     _ = _ignored_set_message
   else:
     pending.eta_confidence = 0.0
     pending.eta_hints = []
-
-  try:
-    elapsed_s = max(0.0, float(status_before.get("elapsed_s") or 0.0))
-  except Exception:
-    elapsed_s = 0.0
-  if elapsed_s > 0.0:
-    pending.job_t0_mono = max(0.0, time.monotonic() - elapsed_s)
 
   _write_status(
     job.status_path,
