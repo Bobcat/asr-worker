@@ -2,32 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Callable
-import os
-import sys
 import threading
 
+from asr_pool_api import (
+  ASRAudioFile,
+  ASRCompletionEvent,
+  ASRCompletionFeedReset,
+  ASROutputSelection,
+  ASRPoolClient,
+  ASRPoolClientConfig,
+  ASRPoolError,
+  ASRPoolRequestRejected,
+  ASRRequestOptions,
+  ASRRequestRouting,
+  ASRSubmitRequest,
+)
 from asr_schema import ASR_SCHEMA_VERSION
-
-_POOL_REPO_ROOT_CANDIDATES = [
-  str(os.getenv("ASR_POOL_REPO_ROOT") or "").strip(),
-  "/home/gunnar/projects/asr-pool-dev",
-  "/srv/asr-pool",
-]
-for _candidate in _POOL_REPO_ROOT_CANDIDATES:
-  if not _candidate:
-    continue
-  _module_path = Path(_candidate) / "asr_pool_transport.py"
-  if _module_path.exists():
-    if _candidate not in sys.path:
-      sys.path.insert(0, _candidate)
-    break
-
-from asr_pool_transport import PoolTransportConfig
-from asr_pool_transport import PoolTransportMultipartBuildError
-from asr_pool_transport import download_request_srt_to_path as _transport_download_request_srt_to_path
-from asr_pool_transport import fetch_pending_status as _transport_fetch_pending_status
-from asr_pool_transport import stream_completions_forever as _transport_stream_completions_forever
-from asr_pool_transport import submit_multipart_request as _transport_submit_multipart_request
 from worker_config import get_float, get_int, get_str
 
 
@@ -84,18 +74,20 @@ def _stream_heartbeat_s() -> float:
   return get_float("worker_events.sse_heartbeat_s", 10.0, min_value=1.0)
 
 
-def _transport_config() -> PoolTransportConfig:
+def _client() -> ASRPoolClient:
   retry_base_delay_s = _retry_base_delay_s()
-  return PoolTransportConfig(
-    base_url=_pool_base_url(),
-    token=get_str("asr_pool.token", ""),
-    http_timeout_s=_http_timeout_s(),
-    retry_attempts=_retry_attempts(),
-    retry_base_delay_s=retry_base_delay_s,
-    retry_max_delay_s=max(retry_base_delay_s, _retry_max_delay_s()),
-    retry_jitter_s=_retry_jitter_s(),
-    stream_heartbeat_s=_stream_heartbeat_s(),
-  ).normalized()
+  return ASRPoolClient(
+    ASRPoolClientConfig(
+      base_url=_pool_base_url(),
+      token=get_str("asr_pool.token", ""),
+      http_timeout_s=_http_timeout_s(),
+      retry_attempts=_retry_attempts(),
+      retry_base_delay_s=retry_base_delay_s,
+      retry_max_delay_s=max(retry_base_delay_s, _retry_max_delay_s()),
+      retry_jitter_s=_retry_jitter_s(),
+      stream_heartbeat_s=_stream_heartbeat_s(),
+    )
+  )
 
 
 def _with_consumer_id(request_payload: dict[str, Any], *, consumer_id: str) -> dict[str, Any]:
@@ -136,6 +128,62 @@ def _prepare_submit_payload(
   return req, src, None
 
 
+def _submit_request_from_payload(*, request_payload: dict[str, Any], audio_path: Path) -> ASRSubmitRequest:
+  req = dict(request_payload or {})
+  audio = dict(req.get("audio") or {})
+  routing = dict(req.get("routing") or {})
+  options = dict(req.get("options") or {})
+  outputs = dict(req.get("outputs") or {})
+  return ASRSubmitRequest(
+    request_id=str(req.get("request_id") or "").strip(),
+    consumer_id=str(req.get("consumer_id") or "").strip(),
+    priority=str(req.get("priority") or "background").strip() or "background",
+    audio=ASRAudioFile(
+      path=audio_path,
+      format=str(audio.get("format") or "wav").strip() or "wav",
+      duration_ms=audio.get("duration_ms"),
+      sample_rate_hz=audio.get("sample_rate_hz"),
+      channels=audio.get("channels"),
+    ),
+    routing=ASRRequestRouting(
+      fairness_key=str(routing.get("fairness_key") or "").strip(),
+      slot_affinity=routing.get("slot_affinity"),
+    ),
+    options=ASRRequestOptions(
+      language=options.get("language"),
+      initial_prompt=options.get("initial_prompt"),
+      align_enabled=options.get("align_enabled"),
+      diarize_enabled=options.get("diarize_enabled"),
+      speaker_mode=options.get("speaker_mode"),
+      min_speakers=options.get("min_speakers"),
+      max_speakers=options.get("max_speakers"),
+      beam_size=options.get("beam_size"),
+      chunk_size=options.get("chunk_size"),
+      asr_backend=options.get("asr_backend"),
+    ),
+    outputs=ASROutputSelection(
+      text=bool(outputs.get("text", False)),
+      segments=bool(outputs.get("segments", False)),
+      srt=bool(outputs.get("srt", False)),
+      srt_inline=bool(outputs.get("srt_inline", False)),
+    ),
+  )
+
+
+def _status_dict_with_request_id(status: Any, fallback_request_id: str) -> dict[str, Any]:
+  row = status.to_dict() if status is not None else {}
+  if fallback_request_id and not str(row.get("request_id") or "").strip():
+    row["request_id"] = str(fallback_request_id)
+  return row
+
+
+def _http_status_for_submit_lifecycle(row: dict[str, Any]) -> int:
+  lifecycle_state = str(row.get("state") or "").strip().lower()
+  if lifecycle_state in {"completed", "failed", "cancelled"}:
+    return 200
+  return 202
+
+
 def submit_remote_pool_request(
   *,
   request_payload: dict[str, Any],
@@ -155,31 +203,9 @@ def submit_remote_pool_request(
       "http_status": 0,
     }
 
-  cfg = _transport_config()
   request_id = str(req.get("request_id") or "").strip()
   try:
-    status_code, submit_body, attempts_used = _transport_submit_multipart_request(
-      config=cfg,
-      request_payload=req,
-      audio_path=audio_path,
-    )
-  except PoolTransportMultipartBuildError as e:
-    cause = e.__cause__
-    exc_type = type(cause).__name__ if cause is not None else type(e).__name__
-    return {
-      "ok": False,
-      "request_id": str(request_id),
-      "prepared_request": req,
-      "error_response": _build_error_response(
-        request=req,
-        code="ASR_REMOTE_MULTIPART_BUILD_FAILED",
-        message=f"Failed to build multipart ASR submit payload: {e}",
-        retryable=False,
-        details={"exc_type": exc_type},
-      ),
-      "submit_lifecycle": {},
-      "http_status": 0,
-    }
+    submit_request = _submit_request_from_payload(request_payload=req, audio_path=audio_path)
   except Exception as e:
     return {
       "ok": False,
@@ -187,50 +213,57 @@ def submit_remote_pool_request(
       "prepared_request": req,
       "error_response": _build_error_response(
         request=req,
-        code="ASR_REMOTE_SUBMIT_IO_FAILURE",
-        message=f"ASR pool submit I/O failed: {type(e).__name__}: {e}",
-        retryable=True,
-        details={
-          "pool_base_url": cfg.base_url,
-          "request_id": request_id,
-          "attempts": int(cfg.retry_attempts),
-          "http_timeout_s": float(cfg.http_timeout_s),
-          "exc_type": type(e).__name__,
-        },
+        code="ASR_REMOTE_REQUEST_INVALID",
+        message=f"Invalid ASR request payload: {type(e).__name__}: {e}",
+        retryable=False,
+        details={"exc_type": type(e).__name__},
       ),
       "submit_lifecycle": {},
       "http_status": 0,
     }
 
-  if status_code not in {200, 202}:
+  try:
+    status = _client().submit_audio(submit_request)
+  except ASRPoolRequestRejected as e:
+    submit_lifecycle = _status_dict_with_request_id(e.request_status, request_id)
+    return {
+      "ok": False,
+      "request_id": str(submit_lifecycle.get("request_id") or request_id),
+      "prepared_request": req,
+      "error_response": _build_error_response(
+        request=req,
+        code=e.code,
+        message=e.message,
+        retryable=bool(e.retryable if e.retryable is not None else True),
+        details=dict(e.details or {}),
+      ),
+      "submit_lifecycle": submit_lifecycle,
+      "http_status": int(e.details.get("http_status") or 0),
+    }
+  except ASRPoolError as e:
     return {
       "ok": False,
       "request_id": str(request_id),
       "prepared_request": req,
       "error_response": _build_error_response(
         request=req,
-        code=str(submit_body.get("code") or "ASR_REMOTE_SUBMIT_FAILED"),
-        message=str(submit_body.get("message") or f"ASR pool submit failed with HTTP {status_code}"),
-        retryable=bool(submit_body.get("retryable", True)),
-        details={
-          "http_status": int(status_code),
-          "pool_base_url": cfg.base_url,
-          "request_id": request_id,
-          "submit_attempts": int(attempts_used),
-          **dict(submit_body.get("details") or {}),
-        },
+        code=e.code,
+        message=e.message,
+        retryable=bool(e.retryable if e.retryable is not None else False),
+        details=dict(e.details or {}),
       ),
-      "submit_lifecycle": dict(submit_body or {}),
-      "http_status": int(status_code),
+      "submit_lifecycle": {},
+      "http_status": int(e.details.get("http_status") or 0),
     }
 
-  rid = str(submit_body.get("request_id") or request_id or "").strip()
+  submit_lifecycle = _status_dict_with_request_id(status, request_id)
+  rid = str(submit_lifecycle.get("request_id") or request_id).strip()
   return {
     "ok": True,
     "request_id": rid,
     "prepared_request": req,
-    "submit_lifecycle": dict(submit_body or {}),
-    "http_status": int(status_code),
+    "submit_lifecycle": submit_lifecycle,
+    "http_status": _http_status_for_submit_lifecycle(submit_lifecycle),
   }
 
 
@@ -240,12 +273,15 @@ def fetch_remote_pending_status(
   request_ids: list[str],
   limit: int = 200,
 ) -> list[dict[str, Any]]:
-  return _transport_fetch_pending_status(
-    config=_transport_config(),
-    consumer_id=consumer_id,
-    request_ids=request_ids,
-    limit=limit,
-  )
+  try:
+    rows = _client().get_request_statuses(
+      consumer_id=consumer_id,
+      request_ids=request_ids,
+      limit=limit,
+    )
+  except ASRPoolError:
+    return []
+  return [row.to_dict() for row in rows]
 
 
 def download_remote_request_srt_to_path(
@@ -254,12 +290,21 @@ def download_remote_request_srt_to_path(
   dst_path: Path,
   allow_empty: bool = False,
 ) -> Path:
-  return _transport_download_request_srt_to_path(
-    config=_transport_config(),
-    request_id=request_id,
-    dst_path=dst_path,
-    allow_empty=allow_empty,
-  )
+  try:
+    return _client().download_srt(
+      request_id=request_id,
+      dst_path=dst_path,
+      allow_empty=allow_empty,
+    )
+  except ASRPoolError as e:
+    raise RuntimeError(f"{e.code}: {e.message}") from e
+
+
+def _completion_event_payload(event: ASRCompletionEvent) -> dict[str, Any]:
+  payload = event.status.to_dict()
+  payload["seq"] = int(event.seq)
+  payload["ts_utc"] = str(event.ts_utc)
+  return payload
 
 
 def stream_remote_completions_forever(
@@ -269,10 +314,21 @@ def stream_remote_completions_forever(
   stop_event: threading.Event,
   on_event: Callable[[str, dict[str, Any]], None],
 ) -> None:
-  _transport_stream_completions_forever(
-    config=_transport_config(),
-    consumer_id=consumer_id,
-    start_since_seq=start_since_seq,
-    stop_event=stop_event,
-    on_event=on_event,
-  )
+  try:
+    for event in _client().iter_completions(
+      consumer_id=consumer_id,
+      since_seq=start_since_seq,
+      stop_event=stop_event,
+    ):
+      if isinstance(event, ASRCompletionEvent):
+        on_event("completion", _completion_event_payload(event))
+      elif isinstance(event, ASRCompletionFeedReset):
+        on_event(
+          "feed_reset",
+          {
+            "old_feed_id": str(event.old_feed_id),
+            "new_feed_id": str(event.new_feed_id),
+          },
+        )
+  except ASRPoolError:
+    return
