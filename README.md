@@ -1,103 +1,47 @@
 # asr-worker
 
-`asr-worker` is a file-backed ASR convenience service on top of `asr-pool` (running locally or remotely).  
-It claims jobs from a queue directory, submits to `asr-pool`, tracks progress, and writes terminal status/artifacts back to the job directory.
+`asr-worker` is a file-backed ASR worker daemon on top of `asr-pool`.
+It claims jobs from a queue directory, submits audio requests to the pool,
+keeps job status up to date, estimates progress and ETA while work is
+running, and writes final artifacts back to the job folder.
 
 ## What It Does
 
-- claims jobs from one queue root (`inbox` -> `running` -> `done`/`error`)
-- submits ASR requests to `asr-pool` (`/asr/v1/requests`)
-- consumes completion events from the pool SSE stream
-- optionally polls the `asr-pool` pending-status HTTP endpoint to update progress while a job is still running
-- updates `status.json` and optionally downloads SRT artifacts
+- watches one queue root directory on disk
+- picks up job directories from `inbox` and moves them to `running`
+- reads `job.json` and submits the job's audio file to `asr-pool`
+- keeps `status.json` up to date while the job is waiting or running
+- estimates progress and ETA from earlier completed runs
+- uses streaming completion events to detect terminal completion quickly
+- can download SRT artifacts into the job directory
+- moves finished jobs to `done` or `error`
+- exposes `/ops` and `/ops/metrics` for operators
 
-## Quick Start
+## Runtime Model
 
-```bash
-sudo apt-get update
-sudo apt-get install -y python3-venv
+`asr-worker` sits between a job queue on disk and `asr-pool`.
+One worker process owns one queue root directory with these subdirectories:
 
-ASR_WORKER_DIR="$HOME/projects/asr-worker-dev"
-mkdir -p "$ASR_WORKER_DIR"
-git clone https://github.com/Bobcat/asr-worker.git "$ASR_WORKER_DIR"
-cd "$ASR_WORKER_DIR"
-python3 -m venv .venv
-.venv/bin/pip install --upgrade pip setuptools wheel
-.venv/bin/pip install -r requirements.txt
+- `inbox` for jobs waiting to be picked up
+- `running` for jobs currently owned by the worker
+- `done` for jobs that completed successfully
+- `error` for jobs that failed validation or finished with an error
 
-# Minimal local queue root
-mkdir -p "$ASR_WORKER_DIR/data/jobs/demo_worker"/{inbox,running,done,error}
+For each job directory, the worker does this:
 
-ASR_WORKER_QUEUE_BASE="$ASR_WORKER_DIR/data/jobs/demo_worker" \
-ASR_WORKER_CONSUMER_ID=worker-upload-dev@1 \
-.venv/bin/python worker_daemon.py
-```
+1. reads `job.json` and resolves the input audio path
+2. moves the job directory from `inbox` to `running`
+3. submits the audio file to `asr-pool`
+4. keeps reading current request status and completion events
+5. updates `status.json`, progress, ETA, and optional artifacts such as SRT
+6. moves the job directory to `done` or `error`
 
-By default the worker expects an `asr-pool` at `http://127.0.0.1:8090`. Override that in `config/local.json` when needed.
+While a job is running, the worker updates `status.json` and can estimate
+progress and ETA from earlier completed runs with similar settings.
 
-## Systemd Example
+## Worker Contract
 
-```bash
-ASR_WORKER_DIR="$HOME/projects/asr-worker-dev"
-mkdir -p ~/.config/systemd/user ~/.config/asr-worker "$ASR_WORKER_DIR/data/jobs/demo_worker"/{inbox,running,done,error}
-cat > ~/.config/systemd/user/asr-worker.service <<EOF
-[Unit]
-Description=ASR Worker
-
-[Service]
-Type=simple
-WorkingDirectory=$ASR_WORKER_DIR
-Environment=ASR_WORKER_QUEUE_BASE=$ASR_WORKER_DIR/data/jobs/demo_worker
-Environment=ASR_WORKER_CONSUMER_ID=worker@1
-ExecStart=$ASR_WORKER_DIR/.venv/bin/python $ASR_WORKER_DIR/worker_daemon.py
-Restart=always
-RestartSec=2
-EnvironmentFile=-%h/.config/asr-worker/asr-worker.env
-
-[Install]
-WantedBy=default.target
-EOF
-cp "$ASR_WORKER_DIR/deploy/env/asr-worker.dev.env.example" ~/.config/asr-worker/asr-worker.env
-systemctl --user daemon-reload
-systemctl --user enable --now asr-worker.service
-```
-
-## Configuration
-
-Config load order:
-
-1. `config/settings.json`
-2. `config/local.json` (optional, gitignored)
-
-Primary settings:
-
-- `asr_pool.base_url`, `asr_pool.token`
-- `asr_remote.*` (HTTP timeout/retries)
-- `worker.*` (queue base, consumer defaults, max outstanding)
-- `worker_events.*` (tick/debounce/heartbeat tuning)
-- `polling_intervals.asr_remote_pending_status_poll_s`
-
-Queue routing is normally driven by environment variables in unit files:
-
-- `ASR_WORKER_QUEUE_BASE`
-- `ASR_WORKER_QUEUE_NAME` (optional)
-- `ASR_WORKER_MAX_OUTSTANDING` (optional override)
-- `ASR_WORKER_CONSUMER_ID` (optional override)
-
-Observability endpoint settings:
-
-- `ASR_WORKER_OPS_ENABLED` (`1`/`0`, default `1`)
-- `ASR_WORKER_OPS_HOST` (default `127.0.0.1`)
-- `ASR_WORKER_OPS_PORT` (default `18110`)
-- `ASR_WORKER_OPS_WINDOW_S` (default `300`)
-- `ASR_WORKER_OPS_RUNNING_STUCK_S` (default `900`)
-
-Each worker process exposes its own `/ops` and `/ops/metrics` on its configured host/port.  
-If you run multiple workers on one machine, use a different `ASR_WORKER_OPS_PORT` per instance.
-
-## Worker Contract Overview
-
-Each worker job must provide a `job.json` with this shape:
+Each job folder must contain a `job.json` file. A typical job looks like this:
 
 ```json
 {
@@ -128,72 +72,50 @@ Each worker job must provide a `job.json` with this shape:
 }
 ```
 
-## Job JSON Field Reference
+Key fields:
 
-The tables below describe the main fields most clients will use. They are not meant as a complete, exhaustive dump of every option.
+- `input.audio_relpath`
+  job-folder-relative path to the source audio file
+- `input.duration_ms`
+  required for progress and ETA estimates
+- `request.*`
+  ASR request data passed through to `asr-pool`, including language,
+  priority, speaker mode, and optional routing
+- `outputs.srt_relpath`
+  required when `worker_features.download_srt=true`
+- `worker_features.*`
+  controls whether the worker writes `status.json`, downloads SRT,
+  writes timing text, and includes extra runtime metadata
 
-### `input`
+For v1 jobs, `worker_features.write_status_json` must be `true`.
 
-| Field | Required | Default / Rules | Effect |
-|---|---|---|---|
-| `audio_relpath` | Yes | Job-dir-relative path | Source audio file the worker submits to `asr-pool`. |
-| `duration_ms` | Yes | Integer `>= 1` | Used for progress prediction/ETA only; does not determine transcript quality. |
+## Progress Prediction
 
-### `request`
-
-| Field | Required | Default / Rules | Effect |
-|---|---|---|---|
-| `request_id` | Conditionally | Falls back to worker (internally generated) `job_id` | Stable ASR request identifier. |
-| `priority` | No | `background` | `asr-pool` scheduling priority. |
-| `routing.slot_affinity` | No | Integer runner slot id, for example `0` | Requests a specific `asr-pool` runner slot. |
-| `speaker_mode` | No | Normalized to `none` / `auto` / `fixed` | Controls diarization strategy and phase profile. |
-| `align_enabled` | No | `true` | Enables/disables alignment in `asr-pool`. |
-| `diarize_enabled` | No | Defaults from `speaker_mode`; forced `false` when `speaker_mode=none` | Enables/disables diarization in `asr-pool`. |
-| `language` | No | Not sent when empty | Passed through to `asr-pool` options. |
-| `initial_prompt` | No | Not sent when empty | Passed through to `asr-pool` and used as the initial transcription prompt. |
-| `beam_size` | No | Integer `>= 1`; ignored when invalid | Passed through to `asr-pool` decoding options. |
-| `min_speakers` | No | Only applied when `speaker_mode=fixed` | Passed through to `asr-pool` diarization options. |
-| `max_speakers` | No | Only applied when `speaker_mode=fixed` | Passed through to `asr-pool` diarization options. |
-
-### `outputs`
-
-| Field | Required | Default / Rules | Effect |
-|---|---|---|---|
-| `srt_relpath` | Required when `download_srt=true` | Job-dir-relative path | Target path where worker stores downloaded SRT artifact. |
-
-### `worker_features`
-
-| Field | Required | Default / Rules | Effect |
-|---|---|---|---|
-| `write_status_json` | Yes | Must be `true` in file-backed v1 | Enables status projection to `status.json`. |
-| `download_srt` | No | `false` | Download SRT artifact from `asr-pool` to `outputs.srt_relpath`. |
-| `track_pending_status` | No | `false` | Poll interim pending status for queue/stage/message updates. |
-| `predictive_progress` | No | `false`; requires `write_status_json=true` | Enables ETA/progress prediction fields in `status.json`. |
-| `write_timings_text` | No | `false` | Writes human-readable `timings_text` in `status.json`. |
-| `include_runtime_meta` | No | `false`; requires `write_status_json=true` | Writes extended `asr_*` runtime/timing metadata. |
-
-Validation notes:
-
-- `input.audio_relpath` and `input.duration_ms` are hard-required.
-- If `download_srt=true`, then `outputs.srt_relpath` is required.
-
-## ETA And Progress
+`asr-worker` can estimate progress and ETA while a job is still running.
+This logic lives in the worker itself, where it can use job metadata and
+earlier completed runs to produce better estimates over time.
 
 When `worker_features.predictive_progress=true`:
 
-- the worker uses `input.duration_ms` as the audio duration input for prediction
-- the predictor reads historical completed runs from `worker.progress_runs_path` (`runs_v1.jsonl`)
-- if `worker.progress_runs_path` is empty, default path is derived from `ASR_WORKER_QUEUE_BASE`/`worker.queue_base` as `<queue_base_parent_parent>/progress_db/runs_v1.jsonl`
-- expected phase durations are estimated; with limited data it falls back to defaults and hints (`cold_start`, `low_sample_n`, `phase_defaults`)
-- the tracker publishes live `progress`, `eta_total_s`, `eta_remaining_s`, `elapsed_s`, `eta_confidence`, `eta_hints` into `status.json`
+- `input.duration_ms` is required
+- the worker reads earlier completed runs from its progress database
+- estimates improve over time as more similar jobs complete
+- the current estimate is written into `status.json`
 
-This allows ETA/progress to refine itself as more jobs complete on the same job-profile.
+Typical `status.json` fields written by this feature:
 
-## Status JSON
+- `progress`
+- `eta_total_s`
+- `eta_remaining_s`
+- `elapsed_s`
+- `eta_confidence`
+- `timings_text` when enabled
 
-`status.json` is the main file clients read while a job is running.
+## Status Files And Artifacts
 
-It contains the worker's current state, progress, messages, timing information, and final ASR result metadata. Client-specific fields may exist alongside it, but the worker only manages its own status and runtime fields.
+`status.json` is the main file clients read while a job is active.
+It contains the worker's current state, progress, messages, timing fields,
+ASR request id, and final error or result metadata.
 
 Example shape:
 
@@ -216,3 +138,54 @@ Example shape:
   "error": null
 }
 ```
+
+If `worker_features.download_srt=true`, the worker downloads the final SRT
+artifact from `asr-pool` and writes it to `outputs.srt_relpath`.
+
+If `worker_features.predictive_progress=true`, `status.json` also carries the
+worker's current progress and ETA estimate. See `Progress Prediction`.
+
+## Configuration
+
+Configuration files are loaded in this order:
+
+1. `config/settings.json`
+2. `config/local.json` (optional, overrides)
+
+Primary configuration areas:
+
+- `asr_pool.*`
+  pool base URL and token
+- `asr_remote.*`
+  HTTP timeout and retry settings for remote pool access
+- `worker.*`
+  queue base, consumer defaults, progress database, and worker identity
+- `worker_events.*`
+  completion heartbeat, inbox debounce, coordinator tick, and metrics log timing
+- status refresh timing
+  controls how often the worker reads current request status from `asr-pool`
+
+Queue routing is usually set through environment variables in service files:
+
+- `ASR_WORKER_QUEUE_BASE`
+- `ASR_WORKER_QUEUE_NAME` (optional)
+- `ASR_WORKER_MAX_OUTSTANDING` (optional override)
+- `ASR_WORKER_CONSUMER_ID` (optional override)
+
+## Observability
+
+Each worker instance can expose:
+
+- `GET /ops`
+- `GET /ops/metrics`
+
+Useful environment variables:
+
+- `ASR_WORKER_OPS_ENABLED`
+- `ASR_WORKER_OPS_HOST`
+- `ASR_WORKER_OPS_PORT`
+- `ASR_WORKER_OPS_WINDOW_S`
+- `ASR_WORKER_OPS_RUNNING_STUCK_S`
+
+If you run multiple workers on one machine, each instance should use its own
+ops port.
