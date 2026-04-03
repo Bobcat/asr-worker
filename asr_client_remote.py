@@ -330,5 +330,14 @@ def stream_remote_completions_forever(
             "new_feed_id": str(event.new_feed_id),
           },
         )
-  except ASRPoolError:
-    return
+  except ASRPoolError as e:
+    payload = {
+      "code": str(e.code),
+      "message": str(e.message),
+      "retryable": (bool(e.retryable) if e.retryable is not None else None),
+      "since_seq": int(max(0, int(start_since_seq))),
+    }
+    details = dict(e.details or {})
+    if details:
+      payload["details"] = details
+    on_event("stream_error", payload)

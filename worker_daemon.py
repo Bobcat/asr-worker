@@ -567,6 +567,16 @@ def _run_worker_submit_reap() -> int:
           if reason == "completion_stream_error":
             counters.sse_reconnects += 1
             _record_window_event(windows.sse_reconnects_ts, time.monotonic(), window_s=ops_window_s)
+            code = str((ev.payload or {}).get("code") or "ASR_COMPLETIONS_STREAM_ERROR").strip()
+            message = str((ev.payload or {}).get("message") or "completion stream error").strip()
+            since_seq = int((ev.payload or {}).get("since_seq") or 0)
+            retryable = (ev.payload or {}).get("retryable")
+            print(
+              "worker_daemon completion_stream_error "
+              f"queue={queue_root.name} consumer_id={consumer_id} "
+              f"code={code} message={message} since_seq={since_seq} retryable={retryable}",
+              flush=True,
+            )
         elif ev.kind != WorkerEventType.TICK:
           continue
 
@@ -641,7 +651,9 @@ def _completion_stream_worker_loop(
       event_bus.put(WorkerEventType.FEED_RESET, dict(payload or {}))
       return
     if kind == "stream_error":
-      event_bus.put(WorkerEventType.TICK, {"reason": "completion_stream_error"})
+      err_payload = dict(payload or {})
+      err_payload["reason"] = "completion_stream_error"
+      event_bus.put(WorkerEventType.TICK, err_payload)
 
   stream_remote_completions_forever(
     consumer_id=consumer_id,
