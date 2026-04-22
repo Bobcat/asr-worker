@@ -19,26 +19,28 @@ running, and writes final artifacts back to the job folder.
 
 ## Code Map
 
-If you are new to the repo, these are the key files:
+If you are new to the repo, these files are the fastest entrypoints:
 
 ### Key Files
 
-| File | Why Open It |
+| File | Use This For |
 |---|---|
-| `app/main.py` | Thin composition root; resolves env/config, builds the runtime config, and starts the worker loop. |
-| `app/worker/coordination/loop.py` | Main coordinator loop, inbox watch events, completion stream handling, scheduling, and ops snapshots. |
-| `app/worker/submit.py` | Claim/refill-from-inbox, submit preparation, submit worker threading, and submit result handling. |
-| `app/worker/pending.py` | Pending-status polling and interim status/progress updates while jobs are running. |
-| `app/worker/runtime.py` | Shared worker runtime state and helper logic used by submit and pending flows. |
-| `app/worker/finalization.py` | Terminal success/error finalization, final status patches, SRT download, and queue moves to `done` or `error`. |
-| `app/remote/asr_bridge.py` | Boundary to `asr-pool`; makes explicit that ASR itself happens outside this repo and the worker bridges to it for submit, status, completions, and SRT download. |
-| `app/queue/fs.py` | Queue/job directory model plus atomic filesystem moves between `inbox`, `running`, `done`, and `error`. |
-| `app/worker/progress/predictor.py` and `app/worker/progress/tracker.py` | Predictive ETA/progress estimation and live status updates. |
-| `app/worker/status/io.py` | `status.json` patch/write behavior and worker-facing message formatting. |
-| `app/config.py` | Merged config loading from `config/settings.json` and optional `config/local.json`. |
-| `app/worker/contract.py` | Worker job contract parsing, path resolution, speaker-mode normalization, and remote request construction. |
+| `app/main.py` | Worker boot: config resolution, queue root setup, and handoff into the main loop. |
+| `app/worker/coordination/loop.py` | Main runtime loop: scheduling, inbox wakeups, completion handling, and ops snapshots. |
+| `app/worker/submit.py` | Submit path: how an inbox job becomes an ASR request. |
+| `app/worker/pending.py` | Pending path: polling waiting/running jobs and writing interim status. |
+| `app/worker/runtime.py` | Shared runtime state and helper objects used across submit, pending, and finalization. |
+| `app/worker/finalization.py` | Terminal path: success/error finalization, SRT download, and move to `done` or `error`. |
+| `app/remote/asr_bridge.py` | ASR handoff boundary: where this repo calls `asr-pool` and where it becomes clear that ASR itself happens outside the worker. |
+| `app/queue/fs.py` | Queue filesystem model: job directories and moves between `inbox`, `running`, `done`, and `error`. |
+| `app/worker/progress/predictor.py` and `app/worker/progress/tracker.py` | Progress and ETA logic while a job is still running. |
+| `app/worker/status/io.py` | `status.json` writes and patches. |
+| `app/config.py` | Runtime settings: how `settings.json` and `local.json` are merged. |
+| `app/worker/contract.py` | Job contract intake: reading `job.json` and building the request payload sent to `asr-pool`. |
 
 ### Top-Level Layout
+
+This section maps the package and directory structure:
 
 | Path | Role |
 |---|---|
@@ -54,6 +56,8 @@ If you are new to the repo, these are the key files:
 | `deploy/` | Systemd and environment examples. |
 
 ### Feature Traces
+
+This section lists the main file-level paths through the worker flows:
 
 **Submit Path**
 
