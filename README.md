@@ -17,6 +17,68 @@ running, and writes final artifacts back to the job folder.
 - moves finished jobs to `done` or `error`
 - exposes `/ops` and `/ops/metrics` for operators
 
+## Code Map
+
+If you are new to the repo, these are the key files:
+
+### Key Files
+
+| File | Why Open It |
+|---|---|
+| `app/main.py` | Thin composition root; resolves env/config, builds the runtime config, and starts the worker loop. |
+| `app/worker/coordination/loop.py` | Main coordinator loop, inbox watch events, completion stream handling, scheduling, and ops snapshots. |
+| `app/worker/submit.py` | Claim/refill-from-inbox, submit preparation, submit worker threading, and submit result handling. |
+| `app/worker/pending.py` | Pending-status polling and interim status/progress updates while jobs are running. |
+| `app/worker/runtime.py` | Shared worker runtime state and helper logic used by submit and pending flows. |
+| `app/worker/finalization.py` | Terminal success/error finalization, final status patches, SRT download, and queue moves to `done` or `error`. |
+| `app/remote/asr_bridge.py` | Boundary to `asr-pool`; makes explicit that ASR itself happens outside this repo and the worker bridges to it for submit, status, completions, and SRT download. |
+| `app/queue/fs.py` | Queue/job directory model plus atomic filesystem moves between `inbox`, `running`, `done`, and `error`. |
+| `app/worker/progress/predictor.py` and `app/worker/progress/tracker.py` | Predictive ETA/progress estimation and live status updates. |
+| `app/worker/status/io.py` | `status.json` patch/write behavior and worker-facing message formatting. |
+| `app/config.py` | Merged config loading from `config/settings.json` and optional `config/local.json`. |
+| `app/worker/contract.py` | Worker job contract parsing, path resolution, speaker-mode normalization, and remote request construction. |
+
+### Top-Level Layout
+
+| Path | Role |
+|---|---|
+| `app/` | Application package and code entrypoints. |
+| `app/worker/` | Worker package root for shared worker-domain modules. |
+| `app/worker/coordination/` | Coordinator loop, event bus, inbox watch glue, and ops-window bookkeeping. |
+| `app/worker/progress/` | Predictive progress and ETA logic. |
+| `app/worker/status/` | Status file writes and runtime metadata patches. |
+| `app/remote/` | ASR pool bridge and related remote-facing constants. |
+| `app/queue/` | Filesystem queue primitives. |
+| `app/ops/` | Operator HTTP endpoints. |
+| `config/` | Tracked defaults plus local overrides. |
+| `deploy/` | Systemd and environment examples. |
+
+### Feature Traces
+
+**Submit Path**
+
+| Flow |
+|---|
+| `app.main`<br>`-> app.worker.coordination.loop.run_worker_loop()`<br>`-> app.worker.submit.refill_from_inbox()`<br>`-> app.worker.submit.submit_worker_loop()`<br>`-> app.worker.submit._prepare_worker_job_for_submit()` |
+
+**Pending-Status Path**
+
+| Flow |
+|---|
+| `app.main`<br>`-> app.worker.coordination.loop.run_worker_loop()`<br>`-> app.worker.pending.poll_pending_jobs()` |
+
+**Completion / Finalization Path**
+
+| Flow |
+|---|
+| `app.main`<br>`-> app.worker.coordination.loop.run_worker_loop()`<br>`-> app.worker.coordination.loop._handle_completion_event()`<br>`-> app.worker.finalization.finalize_job_terminal()` / `app.worker.finalization.finalize_job_error()` |
+
+**Ops Path**
+
+| Flow |
+|---|
+| `app.main`<br>`-> app.worker.coordination.loop.run_worker_loop()`<br>`-> app.worker.coordination.ops.build_ops_snapshot()`<br>`-> app.ops.server` |
+
 ## Runtime Model
 
 `asr-worker` sits between a job queue on disk and `asr-pool`.
