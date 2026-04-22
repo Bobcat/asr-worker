@@ -4,18 +4,18 @@ Description=ASR Worker Upload Dev (%i)
 
 [Service]
 Type=simple
-WorkingDirectory=/home/gunnar/projects/asr-worker-dev
-Environment=PYTHONPATH=/home/gunnar/projects/asr-pool-api-dev/src
-ExecStartPre=/usr/bin/mkdir -p /home/gunnar/projects/transcribe-dev/data/jobs/upload_worker/inbox /home/gunnar/projects/transcribe-dev/data/jobs/upload_worker/running /home/gunnar/projects/transcribe-dev/data/jobs/upload_worker/done /home/gunnar/projects/transcribe-dev/data/jobs/upload_worker/error
-Environment=ASR_WORKER_QUEUE_BASE=/home/gunnar/projects/transcribe-dev/data/jobs/upload_worker
+WorkingDirectory=%h/projects/asr-worker-dev
+Environment=PYTHONPATH=%h/projects/asr-pool-api-dev/src
+Environment=ASR_WORKER_QUEUE_BASE=%h/projects/omniscripta/data/jobs/upload_worker
 Environment=ASR_WORKER_MAX_OUTSTANDING=4
 Environment=ASR_WORKER_CONSUMER_ID=worker-upload@%i
 Environment=ASR_WORKER_STATUS_OWNER=asr-worker-batch
 Environment=ASR_POOL_STATUS_OWNER=asr-pool
-ExecStart=/home/gunnar/projects/asr-worker-dev/.venv/bin/python /home/gunnar/projects/asr-worker-dev/worker_daemon.py
+EnvironmentFile=-%h/.config/asr-worker/asr-worker.dev.env
+ExecStartPre=/usr/bin/mkdir -p ${ASR_WORKER_QUEUE_BASE}/inbox ${ASR_WORKER_QUEUE_BASE}/running ${ASR_WORKER_QUEUE_BASE}/done ${ASR_WORKER_QUEUE_BASE}/error
+ExecStart=%h/projects/asr-worker-dev/.venv/bin/python -m app.main
 Restart=always
 RestartSec=2
-EnvironmentFile=-%h/.config/asr-worker/asr-worker.dev.env
 Nice=10
 IOSchedulingClass=idle
 
