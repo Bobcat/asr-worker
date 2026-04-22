@@ -14,7 +14,7 @@ T = TypeVar("T")
 
 
 def _repo_root() -> Path:
-  return Path(__file__).resolve().parent
+  return Path(__file__).resolve().parent.parent
 
 
 def _load_json_file(path: Path) -> dict[str, Any]:

@@ -9,7 +9,7 @@ import threading
 import time
 from pathlib import Path
 
-from event_loop import WorkerEventBus, WorkerEventType
+from app.worker.coordination.events import WorkerEventBus, WorkerEventType
 
 _libc = ctypes.CDLL("libc.so.6", use_errno=True)
 _libc.inotify_init1.argtypes = [ctypes.c_int]

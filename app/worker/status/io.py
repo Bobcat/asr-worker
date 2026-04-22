@@ -54,13 +54,6 @@ def _append_log(log_path: Path, line: str) -> None:
     f.write(line.rstrip("\n") + "\n")
 
 
-def _append_wx(log_path: Path, line: str) -> None:
-  """Append a filtered WhisperX output line, prefixed with worker wallclock UTC time."""
-  ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-  s = (line or "").rstrip("\n")
-  _append_log(log_path, f"[{ts}] WX {s}")
-
-
 def _read_json(p: Path) -> dict[str, Any]:
   return json.loads(p.read_text(encoding="utf-8"))
 

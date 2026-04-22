@@ -17,8 +17,11 @@ from asr_pool_api import (
   ASRRequestRouting,
   ASRSubmitRequest,
 )
-from asr_schema import ASR_SCHEMA_VERSION
-from worker_config import get_float, get_int, get_str
+from app.config import get_float, get_int, get_str
+
+
+ASR_SCHEMA_VERSION = "asr_v2"
+ASR_SCHEMA_VERSIONS_SUPPORTED = (ASR_SCHEMA_VERSION,)
 
 
 def _build_error_response(

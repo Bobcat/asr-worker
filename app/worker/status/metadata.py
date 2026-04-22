@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from runtime_common import normalize_speaker_mode
+from app.worker.contract import normalize_speaker_mode
 
 
 def _timing_value(timings: dict[str, Any], key: str) -> float | None:

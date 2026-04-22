@@ -6,7 +6,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-from runtime_common import normalize_speaker_mode
+from app.worker.contract import normalize_speaker_mode
 
 
 AUDIO_PHASES = {"whisperx_transcribe", "whisperx_align", "whisperx_diarize"}

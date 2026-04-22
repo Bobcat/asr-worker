@@ -5,12 +5,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from queue_fs import finish_job
-from asr_client_remote import download_remote_request_srt_to_path
-from progress_tracker import _format_timings_text
-from runtime_meta import _extended_runtime_meta_patch
-from worker_status_io import _utc_iso, _write_status
-from worker_config import get_str
+from app.config import get_str
+from app.queue.fs import finish_job
+from app.remote.asr_bridge import download_remote_request_srt_to_path
+from app.worker.progress.tracker import _format_timings_text
+from app.worker.status.io import _utc_iso, _write_status
+from app.worker.status.metadata import _extended_runtime_meta_patch
 
 
 def _worker_status_owner() -> str:
@@ -30,7 +30,7 @@ def _record_phase_timing(*, pending: Any, name: str, elapsed_s: float) -> None:
     _write_status(pending.job.status_path, timings_text=_format_timings_text(pending.timing_rows))
 
 
-def finalize_filebacked_job_terminal(
+def finalize_job_terminal(
   *,
   pending: Any,
   event: dict[str, Any],
@@ -135,7 +135,7 @@ def finalize_filebacked_job_terminal(
   finish_job(job, ok=True)
 
 
-def finalize_filebacked_job_error(*, pending: Any, exc: Exception) -> None:
+def finalize_job_error(*, pending: Any, exc: Exception) -> None:
   patch: dict[str, Any] = {
     "state": "error",
     "phase": "error",

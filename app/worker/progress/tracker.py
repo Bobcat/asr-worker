@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from worker_status_io import _write_status
+from app.worker.status.io import _write_status
 
 
 def _format_timings_text(rows: list[tuple[str, float]], *, total_s: float | None = None) -> str:

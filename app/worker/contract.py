@@ -1,36 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-
-def _elapsed_utc_s(start_utc: Any, end_utc: Any) -> float | None:
-  try:
-    start_unix = float(datetime.fromisoformat(str(start_utc or "").strip().replace("Z", "+00:00")).timestamp())
-    end_unix = float(datetime.fromisoformat(str(end_utc or "").strip().replace("Z", "+00:00")).timestamp())
-  except Exception:
-    return None
-  if start_unix is None or end_unix is None:
-    return None
-  return max(0.0, float(end_unix - start_unix))
-
-
-def _asr_stage_to_phase(stage: str) -> str:
-  key = str(stage or "").strip().lower()
-  mapping = {
-    "prepare": "whisperx_prepare",
-    "transcribe": "whisperx_transcribe",
-    "align": "whisperx_align",
-    "diarize": "whisperx_diarize",
-    "done": "whisperx_finalize",
-  }
-  return str(mapping.get(key) or "")
-
-
-def is_asr_terminal_state(state: str) -> bool:
-  return str(state or "").strip().lower() in {"completed", "failed", "cancelled"}
+from app.remote.asr_bridge import ASR_SCHEMA_VERSION
 
 
 def normalize_speaker_mode(mode: Any) -> str:
@@ -84,11 +58,7 @@ def _build_remote_pool_request_from_contract(*, job: object, job_cfg: dict[str, 
   if not request_id:
     raise RuntimeError("Missing request.request_id")
 
-  speaker_mode = str(request_cfg.get("speaker_mode") or "none").strip().lower() or "none"
-  if speaker_mode in {"off", "disabled", "no_speaker", "nospeaker", "no-speaker"}:
-    speaker_mode = "none"
-  if speaker_mode not in {"none", "auto", "fixed"}:
-    speaker_mode = "auto"
+  speaker_mode = normalize_speaker_mode(request_cfg.get("speaker_mode", "none"))
 
   audio: dict[str, Any] = {
     "local_path": str(input_path),
@@ -151,7 +121,7 @@ def _build_remote_pool_request_from_contract(*, job: object, job_cfg: dict[str, 
         pass
 
   request_payload = {
-    "schema_version": "asr_v2",
+    "schema_version": ASR_SCHEMA_VERSION,
     "request_id": request_id,
     "priority": str(request_cfg.get("priority") or "background").strip() or "background",
     "routing": dict(request_cfg.get("routing") or {}),

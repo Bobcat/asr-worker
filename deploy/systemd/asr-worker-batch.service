@@ -13,7 +13,7 @@ Environment=ASR_WORKER_CONSUMER_ID=worker-upload@1
 Environment=ASR_WORKER_OPS_PORT=28111
 Environment=ASR_WORKER_STATUS_OWNER=asr-worker-batch
 Environment=ASR_POOL_STATUS_OWNER=asr-pool
-ExecStart=/srv/asr-worker/.venv/bin/python /srv/asr-worker/worker_daemon.py
+ExecStart=/srv/asr-worker/.venv/bin/python -m app.main
 Restart=always
 RestartSec=2
 EnvironmentFile=-/etc/asr-worker/asr-worker.env
