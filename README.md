@@ -5,6 +5,17 @@ It claims jobs from a queue directory, submits audio requests to the pool,
 keeps job status up to date, estimates progress and ETA while work is
 running, and writes final artifacts back to the job folder.
 
+## Index
+
+- [What It Does](#what-it-does)
+- [Code Map](#code-map)
+- [Runtime Model](#runtime-model)
+- [Worker Contract](#worker-contract)
+- [Progress Prediction](#progress-prediction)
+- [Status Files And Artifacts](#status-files-and-artifacts)
+- [Configuration](#configuration)
+- [Observability](#observability)
+
 ## What It Does
 
 - watches one queue root directory on disk
