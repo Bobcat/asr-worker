@@ -6,8 +6,8 @@ After=network.target
 User=gunnar
 Group=gunnar
 WorkingDirectory=/srv/asr-worker
-ExecStartPre=/usr/bin/mkdir -p /srv/transcribe/data/jobs/upload_worker/inbox /srv/transcribe/data/jobs/upload_worker/running /srv/transcribe/data/jobs/upload_worker/done /srv/transcribe/data/jobs/upload_worker/error
-Environment=ASR_WORKER_QUEUE_BASE=/srv/transcribe/data/jobs/upload_worker
+ExecStartPre=/usr/bin/mkdir -p /srv/omniscripta/data/upload/jobs/worker/inbox /srv/omniscripta/data/upload/jobs/worker/running /srv/omniscripta/data/upload/jobs/worker/done /srv/omniscripta/data/upload/jobs/worker/error
+Environment=ASR_WORKER_QUEUE_BASE=/srv/omniscripta/data/upload/jobs/worker
 Environment=ASR_WORKER_MAX_OUTSTANDING=4
 Environment=ASR_WORKER_CONSUMER_ID=worker-upload@1
 Environment=ASR_WORKER_OPS_PORT=28111

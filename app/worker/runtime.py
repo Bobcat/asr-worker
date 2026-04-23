@@ -15,9 +15,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _resolve_worker_queue_base() -> Path:
   env_base = str(os.getenv("ASR_WORKER_QUEUE_BASE") or "").strip()
-  cfg_base = get_str("worker.queue_base", "data/jobs/upload_worker").strip()
+  cfg_base = get_str("worker.queue_base", "data/upload/jobs/worker").strip()
   raw = env_base or cfg_base
-  p = Path(raw) if raw else Path("data/jobs/upload_worker")
+  p = Path(raw) if raw else Path("data/upload/jobs/worker")
   return p if p.is_absolute() else (_REPO_ROOT / p).resolve()
 
 

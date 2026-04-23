@@ -6,7 +6,7 @@ Description=ASR Worker Upload Dev (%i)
 Type=simple
 WorkingDirectory=%h/projects/asr-worker-dev
 Environment=PYTHONPATH=%h/projects/asr-pool-api-dev/src
-Environment=ASR_WORKER_QUEUE_BASE=%h/projects/omniscripta/data/jobs/upload_worker
+Environment=ASR_WORKER_QUEUE_BASE=%h/projects/omniscripta/data/upload/jobs/worker
 Environment=ASR_WORKER_MAX_OUTSTANDING=4
 Environment=ASR_WORKER_CONSUMER_ID=worker-upload@%i
 Environment=ASR_WORKER_STATUS_OWNER=asr-worker-batch

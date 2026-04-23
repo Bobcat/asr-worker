@@ -5,7 +5,7 @@
   },
   "worker": {
     "max_outstanding_requests": 1,
-    "queue_base": "/home/gunnar/projects/transcribe-dev/data/jobs/upload_worker",
+    "queue_base": "/home/gunnar/projects/omniscripta/data/upload/jobs/worker",
     "consumer_id": "worker-upload-dev@1",
     "instance": "1"
   }

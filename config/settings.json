@@ -11,11 +11,11 @@
     "retry_jitter_s": 0.1
   },
   "worker": {
-    "queue_base": "data/jobs/upload_worker",
+    "queue_base": "data/upload/jobs/worker",
     "queue_name": "",
     "consumer_id": "",
     "max_outstanding_requests": 1,
-    "progress_db_dir": "data/progress_db",
+    "progress_db_dir": "data/upload/progress_db",
     "progress_runs_path": "",
     "host_id": "",
     "instance": "1",
