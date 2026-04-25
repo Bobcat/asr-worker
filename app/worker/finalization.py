@@ -46,6 +46,8 @@ def finalize_job_terminal(
       "phase": "error",
       "status_owner": _pool_status_owner(),
       "progress": 1.0,
+      "asr_progress": 1.0,
+      "asr_phase": ("cancelled" if terminal_state == "cancelled" else "error"),
       "finished_at": _utc_iso(),
       "message": f"Worker error: {err_code}: {err_msg}",
       "error": f"{err_code}: {err_msg}",
@@ -107,7 +109,8 @@ def finalize_job_terminal(
     "state": "done",
     "phase": "done",
     "status_owner": _pool_status_owner(),
-    "progress": 1.0,
+    "asr_progress": 1.0,
+    "asr_phase": "done",
     "finished_at": _utc_iso(),
     "message": "Done",
     "asr_request_id": str(pending.request_id or ""),
@@ -119,12 +122,14 @@ def finalize_job_terminal(
   if pending.features.get("predictive_progress", False):
     patch.update({
       "progress_mode": "predictive_v1",
-      "eta_total_s": round(actual_total_s, 3),
-      "eta_remaining_s": 0.0,
-      "elapsed_s": round(actual_total_s, 3),
-      "eta_confidence": round(float(pending.eta_confidence), 3),
-      "eta_hints": list(pending.eta_hints),
+      "asr_eta_total_s": round(actual_total_s, 3),
+      "asr_eta_remaining_s": 0.0,
+      "asr_elapsed_s": round(actual_total_s, 3),
+      "asr_eta_confidence": round(float(pending.eta_confidence), 3),
+      "asr_eta_hints": list(pending.eta_hints),
     })
+  else:
+    patch["asr_elapsed_s"] = round(actual_total_s, 3)
   if pending.features.get("include_runtime_meta", False):
     patch.update(_extended_runtime_meta_patch(
       terminal_state="completed",
@@ -141,6 +146,8 @@ def finalize_job_error(*, pending: Any, exc: Exception) -> None:
     "phase": "error",
     "status_owner": _worker_status_owner(),
     "progress": 1.0,
+    "asr_progress": 1.0,
+    "asr_phase": "error",
     "finished_at": _utc_iso(),
     "message": f"Worker error: {exc!r}",
     "error": str(exc),
@@ -153,11 +160,13 @@ def finalize_job_error(*, pending: Any, exc: Exception) -> None:
   if pending.features.get("predictive_progress", False):
     patch.update({
       "progress_mode": "predictive_v1",
-      "eta_total_s": round(actual_total_s, 3),
-      "eta_remaining_s": 0.0,
-      "elapsed_s": round(actual_total_s, 3),
-      "eta_confidence": round(float(pending.eta_confidence), 3),
-      "eta_hints": list(pending.eta_hints),
+      "asr_eta_total_s": round(actual_total_s, 3),
+      "asr_eta_remaining_s": 0.0,
+      "asr_elapsed_s": round(actual_total_s, 3),
+      "asr_eta_confidence": round(float(pending.eta_confidence), 3),
+      "asr_eta_hints": list(pending.eta_hints),
     })
+  else:
+    patch["asr_elapsed_s"] = round(actual_total_s, 3)
   _write_status(pending.job.status_path, **patch)
   finish_job(pending.job, ok=False)

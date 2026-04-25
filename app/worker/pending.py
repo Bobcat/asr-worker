@@ -96,6 +96,7 @@ def _apply_pending_status(*, pending: PendingWorkerJob, row: dict[str, Any]) -> 
     phase="whisperx_wait",
     status_owner=_pool_status_owner(),
     message=msg,
+    asr_phase=_asr_stage_to_phase(stage) or "whisperx_wait",
   )
 
 

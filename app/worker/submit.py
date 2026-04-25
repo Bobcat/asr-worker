@@ -110,6 +110,8 @@ def _prepare_worker_job_for_submit(
     state="running",
     status_owner=_worker_status_owner(),
     started_at=str(status_before.get("started_at") or "").strip() or _utc_iso(),
+    asr_progress=0.0,
+    asr_phase="submit",
   )
   pending.wx_t0_mono = time.monotonic()
 
@@ -151,9 +153,10 @@ def _prepare_worker_job_for_submit(
     job.status_path,
     phase="whisperx_wait",
     status_owner=_pool_status_owner(),
-    progress=0.1,
     message=wait_msg,
     asr_request_id=pending.request_id,
+    asr_progress=0.0,
+    asr_phase="whisperx_wait",
   )
   return submit
 
