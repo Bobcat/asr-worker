@@ -15,7 +15,6 @@
     "queue_name": "",
     "consumer_id": "",
     "max_outstanding_requests": 1,
-    "progress_db_dir": "data/upload/progress_db",
     "progress_runs_path": "",
     "host_id": "",
     "instance": "1",

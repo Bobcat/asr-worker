@@ -172,15 +172,16 @@ def _build_progress_tracker(
 
     _write_status(
       status_path,
-      progress=progress,
       phase=current_status_phase or None,
+      asr_progress=progress,
+      asr_phase=current_phase_key or current_status_phase or None,
       message=current_base_message,
       progress_mode="predictive_v1",
-      eta_total_s=round(est_total, 3),
-      eta_remaining_s=round(est_remaining, 3),
-      elapsed_s=round(est_elapsed, 3),
-      eta_confidence=round(float(eta_confidence), 3),
-      eta_hints=list(hints),
+      asr_eta_total_s=round(est_total, 3),
+      asr_eta_remaining_s=round(est_remaining, 3),
+      asr_elapsed_s=round(est_elapsed, 3),
+      asr_eta_confidence=round(float(eta_confidence), 3),
+      asr_eta_hints=list(hints),
     )
 
   def start_phase(phase_key: str, base_message: str, status_phase: str) -> None:

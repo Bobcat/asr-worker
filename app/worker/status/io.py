@@ -79,9 +79,17 @@ def _write_status(status_path: Path, **patch: Any) -> None:
   # surfaces predictive progress details without requiring UI changes.
   timings = str(cur.get("timings_text", "") or "").strip()
   eta_total = cur.get("eta_total_s")
+  if eta_total is None:
+    eta_total = cur.get("asr_eta_total_s")
   eta_remaining = cur.get("eta_remaining_s")
+  if eta_remaining is None:
+    eta_remaining = cur.get("asr_eta_remaining_s")
   elapsed_s = cur.get("elapsed_s")
+  if elapsed_s is None:
+    elapsed_s = cur.get("asr_elapsed_s")
   eta_hints_raw = cur.get("eta_hints")
+  if eta_hints_raw is None:
+    eta_hints_raw = cur.get("asr_eta_hints")
   msg = str(cur.get("message", "") or "")
 
   running_total_s: float | None = None
