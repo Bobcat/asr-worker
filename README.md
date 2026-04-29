@@ -15,6 +15,7 @@ running, and writes final artifacts back to the job folder.
 - [Status Files And Artifacts](#status-files-and-artifacts)
 - [Configuration](#configuration)
 - [Observability](#observability)
+- [License](#license)
 
 ## What It Does
 
@@ -266,3 +267,7 @@ Useful environment variables:
 
 If you run multiple workers on one machine, each instance should use its own
 ops port.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
