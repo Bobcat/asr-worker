@@ -140,7 +140,7 @@ def _submit_request_from_payload(*, request_payload: dict[str, Any], audio_path:
   return ASRSubmitRequest(
     request_id=str(req.get("request_id") or "").strip(),
     consumer_id=str(req.get("consumer_id") or "").strip(),
-    priority=str(req.get("priority") or "background").strip() or "background",
+    priority=str(req.get("priority") or "normal").strip() or "normal",
     audio=ASRAudioFile(
       path=audio_path,
       format=str(audio.get("format") or "wav").strip() or "wav",
@@ -150,7 +150,6 @@ def _submit_request_from_payload(*, request_payload: dict[str, Any], audio_path:
     ),
     routing=ASRRequestRouting(
       fairness_key=str(routing.get("fairness_key") or "").strip(),
-      slot_affinity=routing.get("slot_affinity"),
     ),
     options=ASRRequestOptions(
       language=options.get("language"),
