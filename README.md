@@ -130,10 +130,7 @@ Each job folder must contain a `job.json` file. A typical job looks like this:
     "request_id": "job_123",
     "language": "nl",
     "speaker_mode": "auto",
-    "priority": "background",
-    "routing": {
-      "slot_affinity": 0
-    }
+    "priority": "normal"
   },
   "outputs": {
     "srt_relpath": "artifacts/output.srt"
